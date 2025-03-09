@@ -84,7 +84,6 @@ func (s *shutdowner) Shutdown(ctx context.Context) error {
 		select {
 		case err, ok := <-errs:
 			if !ok {
-				s.funcs = nil
 				return errors.Join(shutdownErrs...)
 			}
 			if err != nil {
