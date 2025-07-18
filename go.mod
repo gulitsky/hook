@@ -1,3 +1,3 @@
-module github.com/gulitsky/shutdown
+module github.com/gulitsky/hook
 
-go 1.24.1
+go 1.24.5

@@ -1,9 +1,9 @@
-# Shutdown
+# Hook
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/gulitsky/shutdown)](https://goreportcard.com/report/github.com/gulitsky/shutdown)
+[![Go Report Card](https://goreportcard.com/badge/github.com/gulitsky/hook)](https://goreportcard.com/report/github.com/gulitsky/hook)
 
 ## Getting Started
 
 ```bash
-go get github.com/gulitsky/shutdown
+go get github.com/gulitsky/hook
 ```
