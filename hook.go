@@ -10,13 +10,15 @@ import (
 	"sync"
 )
 
-// HookFunc is a function that performs an operation with a context and may return an error.
+// HookFunc is a function that performs an operation with a context and may
+// return an error.
 type HookFunc func(context.Context) error
 
-// Registry manages a collection of HookFunc instances that can be executed concurrently.
+// Registry manages a collection of HookFunc instances that can be executed
+// concurrently.
 type Registry struct {
 	mu    sync.Mutex
-	funcs []HookFunc
+	hooks []HookFunc
 }
 
 var (
@@ -25,10 +27,11 @@ var (
 )
 
 // New creates a new Registry for managing hook functions.
-// The registry is initialized with a pre-allocated slice to optimize memory usage.
+// The registry is initialized with a pre-allocated slice to optimize memory
+// usage.
 func New() *Registry {
 	return &Registry{
-		funcs: make([]HookFunc, 0, 10),
+		hooks: make([]HookFunc, 0, 10),
 	}
 }
 
@@ -42,25 +45,37 @@ func Default() *Registry {
 }
 
 // Add registers one or more hook functions to the Registry.
-// The functions are appended to the internal list and will be executed in reverse order during Run.
 func (r *Registry) Add(funcs ...HookFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.funcs = append(r.funcs, funcs...)
+	r.hooks = append(r.hooks, funcs...)
+}
+
+// Clear removes all registered hook functions from the Registry.
+// It is safe for concurrent use.
+func (r *Registry) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hooks = r.hooks[:0]
 }
 
 // Run executes all registered hook functions concurrently with the provided context.
-// It clears the registry before execution, checks for context cancellation, and collects any errors.
-// If any functions panic or return errors, they are combined and returned as a single error.
-// The functions are executed in reverse order of registration to support proper resource cleanup,
-// as is common in lifecycle management (e.g., closing resources in the opposite order of initialization).
+// The hooks remain in the registry after execution, allowing for repeated runs.
+//
+// The functions are executed in reverse order of registration to support LIFO
+// semantics, which is common for resource cleanup (e.g., closing resources
+// in the opposite order of their creation).
+//
+// If the context is already canceled, Run returns the context's error immediately.
+// Any errors or panics from the hook functions are collected and returned as a
+// single error using errors.Join.
 func (r *Registry) Run(ctx context.Context) error {
 	r.mu.Lock()
-	funcs := r.funcs
-	r.funcs = r.funcs[:0]
+	hooks := make([]HookFunc, len(r.hooks))
+	copy(hooks, r.hooks)
 	r.mu.Unlock()
 
-	if len(funcs) == 0 {
+	if len(hooks) == 0 {
 		return nil
 	}
 
@@ -70,41 +85,45 @@ func (r *Registry) Run(ctx context.Context) error {
 
 	var (
 		wg      sync.WaitGroup
-		errorCh = make(chan error, len(funcs))
+		errChan = make(chan error, len(hooks))
 	)
 
-	for i := len(funcs) - 1; i >= 0; i-- {
-		if err := ctx.Err(); err != nil {
-			errorCh <- err
-			break
-		}
-		fn := funcs[i]
-		wg.Add(1)
+	wg.Add(len(hooks))
+
+	for i := len(hooks) - 1; i >= 0; i-- {
 		go func(fn HookFunc) {
 			defer wg.Done()
 			defer func() {
 				if r := recover(); r != nil {
-					errorCh <- fmt.Errorf("hook function panic: %v", r)
+					errChan <- fmt.Errorf("hook function panic: %v", r)
 				}
 			}()
+
 			if err := fn(ctx); err != nil {
-				errorCh <- err
+				errChan <- err
 			}
-		}(fn)
+		}(hooks[i])
 	}
 
 	wg.Wait()
-	close(errorCh)
+	close(errChan)
 
-	var hookErrs []error
-	for err := range errorCh {
-		if err != nil {
-			hookErrs = append(hookErrs, err)
-		}
+	hookErrs := make([]error, 0, len(hooks))
+	for err := range errChan {
+		hookErrs = append(hookErrs, err)
 	}
 
-	if len(hookErrs) == 0 {
-		return nil
-	}
 	return errors.Join(hookErrs...)
+}
+
+// Len returns the number of registered hook functions.
+func (r *Registry) Len() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.hooks)
+}
+
+// IsEmpty returns true if no hooks are registered.
+func (r *Registry) IsEmpty() bool {
+	return r.Len() == 0
 }
